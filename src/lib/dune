@@ -1,0 +1,6 @@
+(library
+ (name softcheck_analysis)
+ (public_name softcheck-analysis)
+ (libraries base softcheck lattices)
+ (preprocess
+  (pps ppx_deriving.ord ppx_deriving.eq ppx_string ppx_sexp_conv)))
