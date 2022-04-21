@@ -21,15 +21,11 @@ end
 
 module type Language_component = sig
   type vertex = int
-
   type definition_location = Definition_location.t
-
   type expr
 
   val is_ident : expr -> bool
-
   val ident_of_expr : expr -> string
-
   val free_variables : expr -> Set.M(String).t
 end
 
@@ -50,34 +46,53 @@ struct
         ~init:(Set.empty (module N))
 
     module L = Lattices.Powerset.Make (Definition_location)
-    module Spec = Node_specifics.Make (E) (N)
+
+    module Spec =
+      Node_specifics.Make (E) (N)
+        (struct
+          type expr = E.t
+
+          let free_variables_expr = S.free_variables
+        end)
 
     let kill blocks n =
       let open N in
       match n.stmt_s with
-      | Cfg_assign (lv, _) when S.is_ident lv ->
+      | Cfg_call_var_assign (lv, _, _) | Cfg_var_assign (lv, _) ->
+          Set.add
+            (Set.fold
+               ~f:(fun acc l -> Set.add acc (lv, Some l.stmt_label))
+               (Set.filter blocks ~f:(Spec.is_assignment_var ~var:lv))
+               ~init:(Set.empty (module Definition_location)))
+            (lv, None)
+      | (Cfg_call_assign (lv, _, _) | Cfg_assign (lv, _)) when S.is_ident lv ->
           let lv' = S.ident_of_expr lv in
           Set.add
             (Set.fold
                ~f:(fun acc l -> Set.add acc (lv', Some l.stmt_label))
-               (Set.filter blocks ~f:(Spec.is_assignment ~var:lv))
+               (Set.filter blocks ~f:(Spec.is_assignment_expr ~expr:lv))
                ~init:(Set.empty (module Definition_location)))
             (lv', None)
-      | Cfg_assign _ | Cfg_call _ | Cfg_guard _ | Cfg_jump | Cfg_var_decl _ ->
+      | Cfg_call_assign (_, _, _)
+      | Cfg_return _ | Cfg_assign _ | Cfg_call _ | Cfg_guard _ | Cfg_var_decl _
+        ->
           Set.empty (module Definition_location)
 
     let gen n =
       let open N in
       match n.stmt_s with
-      | Cfg_assign (lv, _) when S.is_ident lv ->
+      | (Cfg_call_assign (lv, _, _) | Cfg_assign (lv, _)) when S.is_ident lv ->
           let lv' = S.ident_of_expr lv in
           Set.singleton (module Definition_location) (lv', Some n.stmt_label)
-      | Cfg_assign _ | Cfg_call _ | Cfg_guard _ | Cfg_jump | Cfg_var_decl _ ->
+      | Cfg_call_var_assign (lv, _, _) | Cfg_var_assign (lv, _) ->
+          Set.singleton (module Definition_location) (lv, Some n.stmt_label)
+      | Cfg_call_assign (_, _, _)
+      | Cfg_return _ | Cfg_assign _ | Cfg_call _ | Cfg_guard _ | Cfg_var_decl _
+        ->
           Set.empty (module Definition_location)
 
     module F = struct
       type vertex = Cfg.Vertex.t
-
       type state = L.t
 
       let f _ b s =
@@ -89,7 +104,7 @@ struct
       let initial_state =
         Set.fold
           ~f:(fun acc x ->
-            let fv = Spec.free_variables S.free_variables x in
+            let fv = Spec.free_variables x in
             Set.fold fv ~init:acc ~f:(fun acc x -> Set.add acc (x, None)))
           blocks
           ~init:(Set.empty (module Definition_location))
@@ -100,11 +115,8 @@ struct
         (Framework.Dependencies.Forward (Cfg))
 
     let solution = Fix.solve P.graph
-
     let get_entry_result l = solution (Fix.Circ l)
-
     let get_exit_result l = solution (Fix.Bullet l)
-
     let result_to_string = L.to_string
   end
 end

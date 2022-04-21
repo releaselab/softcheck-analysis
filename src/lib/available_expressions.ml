@@ -7,16 +7,23 @@ module Make
     (E : Expr.S)
     (N : Cfg_node.S with type expr = E.t)
     (Cfg : Flow_graph.FlowGraph with type block = N.t) (S : sig
-      val containst_lv : N.expr -> N.expr -> bool
-
+      val uses_lv_expr : N.expr -> N.expr -> bool
+      val uses_var : string -> N.expr -> bool
       val aexp : E.t -> Set.M(E).t
+      val free_variables : E.t -> Set.M(String).t
     end) =
 struct
   module Solve (P : sig
     val graph : Cfg.t
   end) =
   struct
-    module Spec = Node_specifics.Make (E) (N)
+    module Spec =
+      Node_specifics.Make (E) (N)
+        (struct
+          type expr = E.t
+
+          let free_variables_expr = S.free_variables
+        end)
 
     let aexp_star =
       let blocks =
@@ -43,23 +50,29 @@ struct
     let kill aexp_star n =
       let open N in
       match n.stmt_s with
-      | Cfg_assign (lv, _) -> Set.filter ~f:(S.containst_lv lv) aexp_star
-      | Cfg_call _ | Cfg_guard _ | Cfg_jump | Cfg_var_decl _ ->
+      | Cfg_call_var_assign (lv, _, _) | Cfg_var_assign (lv, _) ->
+          Set.filter ~f:(S.uses_var lv) aexp_star
+      | Cfg_call_assign (lv, _, _) | Cfg_assign (lv, _) ->
+          Set.filter ~f:(S.uses_lv_expr lv) aexp_star
+      | Cfg_return _ | Cfg_call _ | Cfg_guard _ | Cfg_var_decl _ ->
           Set.empty (module E)
 
     let gen n =
       let open N in
       match n.stmt_s with
-      | Cfg_assign (lv, _) ->
+      | Cfg_call_var_assign (lv, _, _) | Cfg_var_assign (lv, _) ->
           Set.filter
-            ~f:(fun e -> not (S.containst_lv lv e))
+            ~f:(fun e -> not (S.uses_var lv e))
             (Spec.aexp ~get_non_trivial_subexpr:S.aexp n)
-      | Cfg_call _ | Cfg_guard _ | Cfg_jump | Cfg_var_decl _ ->
+      | Cfg_call_assign (lv, _, _) | Cfg_assign (lv, _) ->
+          Set.filter
+            ~f:(fun e -> not (S.uses_lv_expr lv e))
+            (Spec.aexp ~get_non_trivial_subexpr:S.aexp n)
+      | Cfg_return _ | Cfg_call _ | Cfg_guard _ | Cfg_var_decl _ ->
           Spec.aexp ~get_non_trivial_subexpr:S.aexp n
 
     module F = struct
       type vertex = Cfg.Vertex.t
-
       type state = L.t
 
       let f _ b s =

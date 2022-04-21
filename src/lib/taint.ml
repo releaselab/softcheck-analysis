@@ -32,8 +32,7 @@ struct
     let vars =
       Set.fold blocks
         ~init:(Set.empty (module String))
-        ~f:(fun acc b ->
-          Set.union acc (RD.Spec.free_variables S.free_variables b))
+        ~f:(fun acc b -> Set.union acc (RD.Spec.free_variables b))
 
     module Var_tainting_lattice =
       Lattices.Map.Make
@@ -44,8 +43,10 @@ struct
         (Lattices.Taint)
 
     module Definition_location = Reaching_definitions.Definition_location
+
     module Reaching_definitions_lattice =
       Lattices.Powerset.Make (Definition_location)
+
     module L =
       Lattices.Pair.Make (Reaching_definitions_lattice) (Var_tainting_lattice)
 
@@ -55,12 +56,16 @@ struct
       | Cfg_assign (lv, rv) when S.is_ident lv ->
           let eval_rv = S.eval s rv in
           [ (S.ident_of_expr lv, eval_rv) ]
-      | Cfg_assign _ | Cfg_call _ | Cfg_guard _ | Cfg_jump | Cfg_var_decl _ ->
+      | Cfg_var_assign (lv, rv) -> [ (lv, S.eval s rv) ]
+      | Cfg_call_var_assign (v, _, _) -> [ (v, Lattices.Taint.bottom) ]
+      | Cfg_call_assign (v, _, _) when S.is_ident v ->
+          [ (S.ident_of_expr v, Lattices.Taint.bottom) ]
+      | Cfg_call_assign _ | Cfg_return _ | Cfg_assign _ | Cfg_call _
+      | Cfg_guard _ | Cfg_var_decl _ ->
           []
 
     module F = struct
       type vertex = Cfg.Vertex.t
-
       type state = L.t
 
       let f _ b s =

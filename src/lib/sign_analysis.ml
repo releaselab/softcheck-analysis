@@ -8,9 +8,7 @@ module Make
     (N : Cfg_node.S with type expr = E.t)
     (Cfg : Flow_graph.FlowGraph with type block = N.t) (S : sig
       val is_ident : E.t -> bool
-
       val ident_of_expr : E.t -> string
-
       val expr_sign_eval : (string -> Lattices.Sign.t) -> E.t -> Lattices.Sign.t
     end) =
 struct
@@ -41,12 +39,17 @@ struct
       match n.stmt_s with
       | Cfg_assign (lv, rv) when S.is_ident lv ->
           [ (S.ident_of_expr lv, S.expr_sign_eval f rv) ]
-      | Cfg_var_decl v -> [ (v, Lattices.Sign.bottom) ]
-      | Cfg_assign _ | Cfg_guard _ | Cfg_jump | Cfg_call _ -> []
+      | Cfg_var_assign (lv, rv) -> [ (lv, S.expr_sign_eval f rv) ]
+      | Cfg_call_var_assign (v, _, _) | Cfg_var_decl v ->
+          [ (v, Lattices.Sign.bottom) ]
+      | Cfg_call_assign (v, _, _) when S.is_ident v ->
+          [ (S.ident_of_expr v, Lattices.Sign.bottom) ]
+      | Cfg_call_assign _ | Cfg_return _ | Cfg_assign _ | Cfg_guard _
+      | Cfg_call _ ->
+          []
 
     module F = struct
       type vertex = Cfg.Vertex.t
-
       type state = L.t
 
       let f _ b s =
